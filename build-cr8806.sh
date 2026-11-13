@@ -5,7 +5,7 @@
 #
 #  Script lam tron goi:
 #    1. Tach FIT kernel tu dump UBI goc (mtd18_rootfs.bin / stock_rootfs.bin),
-#       lay DTB cua Xiaomi (config@mp02.1), decompile ra .dts va doc:
+#       lay DTB cua Xiaomi (config@mp03.3), decompile ra .dts va doc:
 #         - nand-ecc-strength / nand-ecc-step-size cua QPIC NAND
 #         - operating-points (bang tan so CPU) cua kernel goc
 #    2. Patch ipq5018-cr8806.dts trong ma nguon fanha99:
@@ -23,7 +23,7 @@
 #    WORKDIR=$PWD/cr8806-build   thu muc lam viec
 #    SRC_REPO=...                repo nguon (mac dinh fanha99)
 #    SRC_BRANCH=main             nhanh
-#    STOCK_CONFIG=mp02.1         ten config FIT trong kernel goc (U-Boot Xiaomi dung mp02.1)
+#    STOCK_CONFIG=mp03.3         ten config FIT trong kernel goc (machid 0x8040002 -> mp03.3)
 #    ECC_STRENGTH=               ep gia tri ECC (bo trong = lay tu stock, du phong 4)
 #    CPUFREQ_MODE=stock          stock: chi giu OPP <= tan so max cua stock (1008 MHz)
 #                                off  : tat han cpufreq (CPU giu tan so U-Boot dat)
@@ -41,7 +41,7 @@ STOCK_IN="${1:-${STOCK_IN:-}}"
 WORKDIR="${WORKDIR:-$PWD/cr8806-build}"
 SRC_REPO="${SRC_REPO:-https://github.com/fanha99/openwrt-xiaomi-cr8806-nss.git}"
 SRC_BRANCH="${SRC_BRANCH:-main}"
-STOCK_CONFIG="${STOCK_CONFIG:-mp02.1}"
+STOCK_CONFIG="${STOCK_CONFIG:-mp03.3}"   # machid 0x8040002 -> U-Boot Xiaomi chon config@mp03.3
 ECC_STRENGTH="${ECC_STRENGTH:-}"
 CPUFREQ_MODE="${CPUFREQ_MODE:-stock}"
 LUCI_LANG="${LUCI_LANG:-vi}"
