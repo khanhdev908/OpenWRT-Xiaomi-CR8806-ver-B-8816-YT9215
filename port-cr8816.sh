@@ -178,6 +178,14 @@ cat >"$DTSF" <<'DTS'
 &led_internet_blue { gpios = <&tlmm 26 GPIO_ACTIVE_HIGH>; };
 &led_internet_yellow { gpios = <&tlmm 27 GPIO_ACTIVE_HIGH>; };
 
+/*
+ * QCN6122 tren CR8816: reset GPIO 18 (DTB goc mp03.3: boot-args <2 4 2 0x12 0 0>).
+ * cr880x.dtsi dung GPIO 27 cua CR8806 -> userPD2 "USER-PD DOG stalled init".
+ */
+&q6v5_wcss {
+	boot-args = <0x2 4 2 18 0 0>;
+};
+
 /* BDF Wi-Fi rieng cua CR8816 (stock bdwlan.b23 / qcn6122 bdwlan.b60) */
 &wifi { qcom,ath11k-calibration-variant = "Xiaomi-CR8816"; };
 &wifi1 { qcom,ath11k-calibration-variant = "Xiaomi-CR8816"; };
