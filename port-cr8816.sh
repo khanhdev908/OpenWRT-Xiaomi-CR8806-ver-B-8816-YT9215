@@ -225,7 +225,7 @@ if ! grep -q 'define Device/xiaomi_cr8816' "$MK"; then
       print "\tSUPPORTED_DEVICES += xiaomi,cr8806"
       print "\tDEVICE_PACKAGES := \\"
       print "\t\tath11k-firmware-ipq5018-qcn6122 \\"
-      print "\t\tipq-wifi-xiaomi_cr8806 \\"
+      print "\t\t-ipq-wifi-xiaomi_cr8806 \\"
       print "\t\t-kmod-usb3 -kmod-usb-dwc3 -kmod-usb-dwc3-qcom \\"
       print "\t\t-kmod-fs-ext4 -e2fsprogs -losetup"
       print "endef"

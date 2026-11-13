@@ -80,6 +80,13 @@ jobs:
       - name: Build (make download + make -j)
         run: STEP=build SKIP_DEPS=1 ./build-cr8806.sh
 
+      - name: Kiem tra BDF Wi-Fi trong rootfs
+        if: always()
+        run: |
+          md5sum wifi-cr8816/board-2.bin.* || true
+          md5sum cr8806-build/openwrt/files/lib/firmware/ath11k/*/hw1.0/board-2.bin || true
+          md5sum cr8806-build/openwrt/build_dir/target-*/root-qualcommax/lib/firmware/ath11k/*/hw1.0/board-2.bin || true
+
       - name: Upload firmware
         if: always()
         uses: actions/upload-artifact@v4
