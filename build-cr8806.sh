@@ -156,7 +156,15 @@ get_source() {
   if [ ! -d "$SRC/.git" ]; then
     log "Clone $SRC_REPO ($SRC_BRANCH)"
     # Lich su day du: scripts/getver.sh can no de dat ten phien ban
-    git clone -b "$SRC_BRANCH" "$SRC_REPO" "$SRC"
+    # Cache CI co the da khoi phuc san $SRC/dl -> clone vao thu muc tam roi gop
+    if [ -d "$SRC" ] && [ -n "$(ls -A "$SRC" 2>/dev/null)" ]; then
+      rm -rf "$SRC.tmp"
+      git clone -b "$SRC_BRANCH" "$SRC_REPO" "$SRC.tmp"
+      cp -a "$SRC.tmp/." "$SRC/"
+      rm -rf "$SRC.tmp"
+    else
+      git clone -b "$SRC_BRANCH" "$SRC_REPO" "$SRC"
+    fi
   else
     log "Ma nguon da co o $SRC (khong pull de giu nguyen ban da patch)"
   fi
