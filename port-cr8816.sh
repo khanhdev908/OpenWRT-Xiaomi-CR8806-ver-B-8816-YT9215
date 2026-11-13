@@ -18,6 +18,7 @@
 # =============================================================================
 set -Eeuo pipefail
 SRC="${1:?port-cr8816.sh <thu-muc-openwrt>}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
 cd "$SRC"
 T=target/linux/qualcommax
 [ -f "$T/dts/ipq5018-cr880x.dtsi" ] || { echo "Khong thay $T/dts/ipq5018-cr880x.dtsi" >&2; exit 1; }
@@ -177,6 +178,10 @@ cat >"$DTSF" <<'DTS'
 &led_internet_blue { gpios = <&tlmm 26 GPIO_ACTIVE_HIGH>; };
 &led_internet_yellow { gpios = <&tlmm 27 GPIO_ACTIVE_HIGH>; };
 
+/* BDF Wi-Fi rieng cua CR8816 (stock bdwlan.b23 / qcn6122 bdwlan.b60) */
+&wifi { qcom,ath11k-calibration-variant = "Xiaomi-CR8816"; };
+&wifi1 { qcom,ath11k-calibration-variant = "Xiaomi-CR8816"; };
+
 /* Nut: mesh GPIO 28, reset GPIO 38 */
 &button_pins {
 	pins = "gpio28", "gpio38";
@@ -250,6 +255,17 @@ if ! grep -q 'xiaomi,cr8816' "$NET"; then
     }
     { print }' "$NET" >"$NET.tmp" && mv "$NET.tmp" "$NET"
 fi
+
+# --- 5. board-2.bin Wi-Fi tu firmware goc CR8816 ------------------------------
+# board CR8806 (0x90/0x10) lam QCN6122 crash "USER-PD DOG stalled init".
+for c in IPQ5018 QCN6122; do
+  if [ -f "$HERE/wifi-cr8816/board-2.bin.$c" ]; then
+    mkdir -p "files/lib/firmware/ath11k/$c/hw1.0"
+    cp "$HERE/wifi-cr8816/board-2.bin.$c" "files/lib/firmware/ath11k/$c/hw1.0/board-2.bin"
+  else
+    echo "[port-cr8816] CANH BAO: thieu $HERE/wifi-cr8816/board-2.bin.$c" >&2
+  fi
+done
 
 echo "[port-cr8816] xong:"
 echo "  $T/dts/ipq5018-cr8816.dts"
