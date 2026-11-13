@@ -1,0 +1,92 @@
+name: Build OpenWrt NSS - Xiaomi CR8806
+
+# Repo cua ban can co:
+#   build-cr8806.sh                    (script nay)
+#   port-cr8816.sh                     (them thiet bi CR8816 / YT9215S)
+#   stock/stock_rootfs.bin             (dump mtd18 goc, ~30 MB, < 100 MB nen commit duoc)
+#   .github/workflows/build-cr8806.yml (file nay)
+# Vao tab Actions -> "Build OpenWrt NSS - Xiaomi CR8806" -> Run workflow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      board:
+        description: "cr8816 = switch Motorcomm YT9215S (may cua Tony); cr8806 = QCA8337"
+        type: choice
+        options: [cr8816, cr8806]
+        default: cr8816
+      stock_path:
+        description: "Duong dan file dump goc trong repo (de trong = dung gia tri mac dinh ECC 4 / 1008 MHz)"
+        default: "stock/stock_rootfs.bin"
+        required: false
+      cpufreq_mode:
+        description: "stock = giu OPP <= 1008 MHz; off = tat han cpufreq"
+        type: choice
+        options: [stock, off]
+        default: stock
+      luci_lang:
+        description: "Ngon ngu LuCI (vi, en de trong...)"
+        default: "vi"
+        required: false
+      src_branch:
+        description: "Nhanh cua fanha99/openwrt-xiaomi-cr8806-nss"
+        default: "main"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      WORKDIR: ${{ github.workspace }}/cr8806-build
+      BOARD: ${{ inputs.board }}
+      CPUFREQ_MODE: ${{ inputs.cpufreq_mode }}
+      LUCI_LANG: ${{ inputs.luci_lang }}
+      SRC_BRANCH: ${{ inputs.src_branch }}
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Giai phong dung luong dia
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+          df -h / | tail -1
+
+      - name: Cache nguon tai ve (dl/) va ccache
+        uses: actions/cache@v4
+        with:
+          path: |
+            cr8806-build/openwrt/dl
+            .ccache
+          key: cr8806-${{ inputs.src_branch }}-${{ github.run_id }}
+          restore-keys: cr8806-${{ inputs.src_branch }}-
+
+      - name: Patch + .config
+        run: |
+          chmod +x build-cr8806.sh
+          STOCK=""
+          if [ -n "${{ inputs.stock_path }}" ] && [ -f "${{ inputs.stock_path }}" ]; then
+            STOCK="${{ inputs.stock_path }}"
+          else
+            echo "::warning::Khong thay file stock, dung gia tri mac dinh (ECC 4/512, 1008 MHz)"
+          fi
+          STEP=patch  ./build-cr8806.sh "$STOCK"
+          STEP=config ./build-cr8806.sh
+
+      - name: Build (make download + make -j)
+        run: STEP=build SKIP_DEPS=1 ./build-cr8806.sh
+
+      - name: Upload firmware
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-xiaomi_${{ inputs.board }}-nss-${{ github.run_number }}
+          path: |
+            cr8806-build/output/
+            cr8806-build/diffconfig-cr8806.txt
+            cr8806-build/build-error.log
+          if-no-files-found: warn
