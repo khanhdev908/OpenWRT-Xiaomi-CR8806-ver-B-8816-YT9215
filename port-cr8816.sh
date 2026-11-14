@@ -295,6 +295,30 @@ INIT
 chmod 755 files/etc/init.d/mi_bootok
 ln -sf ../init.d/mi_bootok files/etc/rc.d/S99mi_bootok
 
+# --- 7. Shaping upload khi WAN chi 10/100M -----------------------------------
+# CPU<->YT9215 la 2.5G, GMAC khong ho tro pause: xuong cong 100M thi bo dem
+# switch tran -> upload con ~6 Mbps. tbf 90% toc do link, burst nho -> ~80 Mbps.
+mkdir -p files/etc/hotplug.d/iface
+cat > files/etc/hotplug.d/iface/30-cr8816-wanshape <<'HP'
+#!/bin/sh
+[ "$ACTION" = ifup ] || exit 0
+[ "$INTERFACE" = wan ] || [ "$INTERFACE" = wan6 ] || exit 0
+. /lib/functions.sh
+case "$(board_name)" in xiaomi,cr8816) ;; *) exit 0 ;; esac
+[ "$(uci -q get network.globals.cr8816_wanshape)" = 0 ] && exit 0
+command -v tc >/dev/null || exit 0
+dev=wan
+sp=$(cat /sys/class/net/$dev/speed 2>/dev/null)
+case "$sp" in ''|-1|*[!0-9]*) exit 0 ;; esac
+if [ "$sp" -le 100 ]; then
+	tc qdisc replace dev $dev root tbf rate $((sp * 9 / 10))mbit burst 4k latency 50ms
+	logger -t cr8816 "wan ${sp}M: upload shaping $((sp * 9 / 10))mbit"
+else
+	tc qdisc show dev $dev | grep -q tbf && tc qdisc del dev $dev root
+fi
+exit 0
+HP
+
 echo "[port-cr8816] xong:"
 echo "  $T/dts/ipq5018-cr8816.dts"
 grep -n 'xiaomi_cr8816' "$MK" | head -2
