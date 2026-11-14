@@ -388,11 +388,45 @@ static void yt_trunk_up(void)
 	yt_write(YT_MDIO_POLLINGn(p), sspeed | POLL_DUPLEX | POLL_LINK);
 }
 
+static bool phy_reset = true;
+module_param(phy_reset, bool, 0444);
+MODULE_PARM_DESC(phy_reset, "soft-reset each internal PHY and restart autoneg");
+
+static void yt_phy_show(const char *when, unsigned int phy)
+{
+	u16 bmcr = 0, bmsr = 0, id1 = 0, id2 = 0, adv = 0, lpa = 0;
+
+	yt_phy_read(phy, MII_BMCR, &bmcr);
+	yt_phy_read(phy, MII_BMSR, &bmsr);
+	yt_phy_read(phy, MII_BMSR, &bmsr);	/* latched: second read is live */
+	yt_phy_read(phy, MII_PHYSID1, &id1);
+	yt_phy_read(phy, MII_PHYSID2, &id2);
+	yt_phy_read(phy, MII_ADVERTISE, &adv);
+	yt_phy_read(phy, MII_LPA, &lpa);
+	pr_info("yt9215-nss: [%s] PHY %u id %04x:%04x BMCR %04x BMSR %04x (%s%s) ADV %04x LPA %04x\n",
+		when, phy, id1, id2, bmcr, bmsr,
+		bmsr & BMSR_LSTATUS ? "link" : "nolink",
+		bmcr & BMCR_PDOWN ? ", POWERDOWN" : "", adv, lpa);
+}
+
+static void yt_phys_show(const char *when)
+{
+	char buf[64], *s, *tok;
+	unsigned int phy;
+
+	strscpy(buf, phys, sizeof(buf));
+	s = buf;
+	while ((tok = strsep(&s, ",")) != NULL)
+		if (*tok && !kstrtouint(tok, 10, &phy) && phy <= 7)
+			yt_phy_show(when, phy);
+}
+
 static void yt_wake_phys(void)
 {
 	char buf[64], *s, *tok;
 	unsigned int phy;
 	u16 bmcr;
+	int i;
 
 	strscpy(buf, phys, sizeof(buf));
 	s = buf;
@@ -401,11 +435,21 @@ static void yt_wake_phys(void)
 			continue;
 		if (yt_phy_read(phy, MII_BMCR, &bmcr))
 			continue;
-		if (bmcr & BMCR_PDOWN) {
-			yt_phy_write(phy, MII_BMCR,
-				     (bmcr & ~BMCR_PDOWN) | BMCR_ANENABLE | BMCR_ANRESTART);
-			pr_info("yt9215-nss: PHY %u woken (BMCR 0x%04x)\n", phy, bmcr);
+		if (phy_reset) {
+			/* what phy_init_hw + genphy_resume + config_aneg do
+			 * when DSA attaches the PHY
+			 */
+			yt_phy_write(phy, MII_BMCR, BMCR_RESET);
+			for (i = 0; i < 50; i++) {
+				msleep(10);
+				if (yt_phy_read(phy, MII_BMCR, &bmcr) || !(bmcr & BMCR_RESET))
+					break;
+			}
 		}
+		yt_phy_write(phy, MII_BMCR,
+			     (bmcr & ~(BMCR_PDOWN | BMCR_ISOLATE)) |
+			     BMCR_ANENABLE | BMCR_ANRESTART);
+		pr_info("yt9215-nss: PHY %u BMCR 0x%04x -> autoneg restarted\n", phy, bmcr);
 	}
 }
 
@@ -436,13 +480,16 @@ static int __init yt_nss_init(void)
 	pr_info("yt9215-nss: YT9215 chip id 0x%08x on %s:%02x\n", id, bus_id, sw_addr);
 
 	if (identify || dump) {
-		if (dump)
+		if (dump) {
 			yt_dump("now");
+			yt_phys_show("now");
+		}
 		put_device(&bus->dev);
 		return dump ? -EAGAIN : 0;
 	}
 
 	yt_dump("before");
+	yt_phys_show("before");
 
 	if (reset) {
 		yt_write(YT_RST, YT_RST_HW);
@@ -497,6 +544,7 @@ static int __init yt_nss_init(void)
 
 	msleep(50);
 	yt_dump("after");
+	yt_phys_show("after");
 	pr_info("yt9215-nss: fabric re-armed: trunk port %d %d Mb/s%s, VLANs %s\n",
 		trunk_port, trunk_speed == 1000 ? 1000 : 2500,
 		pause ? " +pause" : "", vlans);

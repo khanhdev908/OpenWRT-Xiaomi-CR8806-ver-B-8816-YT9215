@@ -359,6 +359,9 @@ collect() {
   cp -v "$(find "$WORKDIR/itb" -name '*_vol-kernel.ubifs' | head -1)" \
         "$dst/openwrt-qualcommax-ipq50xx-${DEV}-squashfs-uImage.itb"
   [ -f "$WORKDIR/stock-cr8806.dts" ] && cp "$WORKDIR/stock-cr8806.dts" "$dst"/
+  # module fabric NSS rieng, de scp + insmod thu ma khong can flash lai
+  find "$SRC/build_dir" -name 'yt9215-nss.ko' -path '*yt9215-nss*' 2>/dev/null | head -1 |
+    xargs -r -I{} cp -v {} "$dst"/
   (cd "$dst" && sha256sum -- * >sha256sums.txt)
   verify_ubi "$ubi"
   log "Xong! File o: $dst"
