@@ -32,6 +32,7 @@
 #include <linux/phy.h>
 #include <linux/mii.h>
 #include <linux/string.h>
+#include <linux/workqueue.h>
 #include <linux/bits.h>
 #include <linux/bitfield.h>
 
@@ -146,6 +147,7 @@ static struct mii_bus *bus;
 static int yt_error;
 static u16 used_ports;	/* every port named in vlans */
 static u16 first_vid = 1;
+static u16 phy_mask;	/* internal PHYs = front ports, from phys */
 
 static void yt_fail(int ret)
 {
@@ -433,6 +435,7 @@ static void yt_wake_phys(void)
 	while ((tok = strsep(&s, ",")) != NULL) {
 		if (!*tok || kstrtouint(tok, 10, &phy) || phy > 7)
 			continue;
+		phy_mask |= BIT(phy);
 		if (yt_phy_read(phy, MII_BMCR, &bmcr))
 			continue;
 		if (phy_reset) {
@@ -451,6 +454,81 @@ static void yt_wake_phys(void)
 			     BMCR_ANENABLE | BMCR_ANRESTART);
 		pr_info("yt9215-nss: PHY %u BMCR 0x%04x -> autoneg restarted\n", phy, bmcr);
 	}
+}
+
+static unsigned int poll_ms = 1000;
+module_param(poll_ms, uint, 0444);
+MODULE_PARM_DESC(poll_ms, "PHY link poll interval (0 = off)");
+
+static struct delayed_work poll_work;
+static u32 last_ctrl[8];
+
+static u32 yt_phy_resolve(unsigned int phy, const char **desc)
+{
+	u16 adv = 0, lpa = 0, c1000 = 0, s1000 = 0;
+	u32 ctrl = PORT_RX_MAC_EN | PORT_TX_MAC_EN;
+	u16 common;
+
+	yt_phy_read(phy, MII_ADVERTISE, &adv);
+	yt_phy_read(phy, MII_LPA, &lpa);
+	yt_phy_read(phy, MII_CTRL1000, &c1000);
+	yt_phy_read(phy, MII_STAT1000, &s1000);
+	common = adv & lpa;
+
+	if ((c1000 & ADVERTISE_1000FULL) && (s1000 & LPA_1000FULL)) {
+		ctrl |= 2 | PORT_DUPLEX;
+		*desc = "1000/full";
+	} else if ((c1000 & ADVERTISE_1000HALF) && (s1000 & LPA_1000HALF)) {
+		ctrl |= 2;
+		*desc = "1000/half";
+	} else if (common & ADVERTISE_100FULL) {
+		ctrl |= 1 | PORT_DUPLEX;
+		*desc = "100/full";
+	} else if (common & ADVERTISE_100HALF) {
+		ctrl |= 1;
+		*desc = "100/half";
+	} else if (common & ADVERTISE_10FULL) {
+		ctrl |= PORT_DUPLEX;
+		*desc = "10/full";
+	} else {
+		*desc = "10/half";
+	}
+	if ((ctrl & PORT_DUPLEX) && (common & ADVERTISE_PAUSE_CAP))
+		ctrl |= PORT_RX_PAUSE | PORT_TX_PAUSE;
+	return ctrl;
+}
+
+static void yt_poll(struct work_struct *w)
+{
+	unsigned int phy;
+	const char *desc;
+	u16 bmsr;
+	u32 ctrl;
+
+	for (phy = 0; phy < 8; phy++) {
+		if (!(phy_mask & BIT(phy)))
+			continue;
+		yt_phy_read(phy, MII_BMSR, &bmsr);	/* latched low */
+		if (yt_phy_read(phy, MII_BMSR, &bmsr))
+			continue;
+		if ((bmsr & BMSR_LSTATUS) && (bmsr & BMSR_ANEGCOMPLETE)) {
+			ctrl = yt_phy_resolve(phy, &desc);
+		} else {
+			ctrl = 0;
+			desc = NULL;
+		}
+		if (ctrl == last_ctrl[phy])
+			continue;
+		yt_write(YT_PORTn_CTRL(phy), ctrl);
+		last_ctrl[phy] = ctrl;
+		if (desc)
+			pr_info("yt9215-nss: port %u link up %s%s\n", phy, desc,
+				ctrl & PORT_TX_PAUSE ? " +pause" : "");
+		else
+			pr_info("yt9215-nss: port %u link down\n", phy);
+	}
+	yt_error = 0;
+	schedule_delayed_work(&poll_work, msecs_to_jiffies(poll_ms));
 }
 
 static int __init yt_nss_init(void)
@@ -485,6 +563,7 @@ static int __init yt_nss_init(void)
 			yt_phys_show("now");
 		}
 		put_device(&bus->dev);
+		bus = NULL;
 		return dump ? -EAGAIN : 0;
 	}
 
@@ -525,10 +604,15 @@ static int __init yt_nss_init(void)
 		yt_update(YT_ACT_UNK_UCAST, 3u << (2 * p), 0);	/* flood */
 		yt_update(YT_ACT_UNK_MCAST, 3u << (2 * p), 0);
 		if (p != trunk_port)
-			/* front MACs follow their PHYs */
+			/* The MAC does not follow the PHY on its own (measured:
+			 * PHY 0 linked at 1G, port status still down with the
+			 * reset default ctrl 0x7fa). Same as yt921x: the port
+			 * starts down and the link poller below forces speed,
+			 * duplex and the MACs from the PHY's state, the way
+			 * phylink does under DSA.
+			 */
 			yt_update(YT_PORTn_CTRL(p),
-				  PORT_LINK_AN | PORT_PAUSE_AN | PORT_RX_MAC_EN | PORT_TX_MAC_EN,
-				  PORT_LINK_AN | PORT_PAUSE_AN | PORT_RX_MAC_EN | PORT_TX_MAC_EN);
+				  PORT_LINK_AN | PORT_RX_MAC_EN | PORT_TX_MAC_EN, 0);
 	}
 
 	yt_trunk_up();
@@ -548,8 +632,14 @@ static int __init yt_nss_init(void)
 	pr_info("yt9215-nss: fabric re-armed: trunk port %d %d Mb/s%s, VLANs %s\n",
 		trunk_port, trunk_speed == 1000 ? 1000 : 2500,
 		pause ? " +pause" : "", vlans);
-	put_device(&bus->dev);
-	bus = NULL;
+
+	/* stay resident: the bus reference is kept for the link poller */
+	memset(last_ctrl, 0xff, sizeof(last_ctrl));
+	INIT_DELAYED_WORK(&poll_work, yt_poll);
+	if (poll_ms)
+		schedule_delayed_work(&poll_work, 0);
+	else
+		pr_warn("yt9215-nss: poll_ms=0, front MACs stay down\n");
 	return 0;
 
 fail:
@@ -563,6 +653,11 @@ fail:
 
 static void __exit yt_nss_exit(void)
 {
+	if (!bus)
+		return;
+	cancel_delayed_work_sync(&poll_work);
+	put_device(&bus->dev);
+	bus = NULL;
 }
 
 module_init(yt_nss_init);
