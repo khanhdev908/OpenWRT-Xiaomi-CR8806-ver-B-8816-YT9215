@@ -384,6 +384,48 @@ if [ "${CR8816_NSS:-1}" = 1 ]; then
   sed -i 's/^dev=wan$/dev=$(uci -q get network.wan.device); dev=${dev:-wan}\ncase "$dev" in *.*) exit 0 ;; esac  # NSS trunk: eth1.2 bao toc do trunk, khong phai cong WAN/' files/etc/hotplug.d/iface/30-cr8816-wanshape
 fi
 
+# --- 9. Tu bat Wi-Fi lan dau (OpenWrt mac dinh tat) ---------------------------
+# Chi dong vao cau hinh wireless con nguyen mac dinh (SSID OpenWrt, khong mat
+# khau). ath11k nap muon (sau NSS) nen chay tu hotplug ieee80211, khong phai
+# uci-defaults. SSID CR8816 / CR8816-5G, mat khau 12345678 - hay doi ngay.
+mkdir -p files/etc/hotplug.d/ieee80211
+cat > files/etc/hotplug.d/ieee80211/90-cr8816-wifi-on <<'HP'
+#!/bin/sh
+[ "$ACTION" = add ] || exit 0
+. /lib/functions.sh
+case "$(board_name)" in xiaomi,cr8816) ;; *) exit 0 ;; esac
+(
+	lock /var/lock/cr8816-wifi-on
+	for i in $(seq 1 60); do
+		[ -s /etc/config/wireless ] && [ "$(uci -q show wireless | grep -c '=wifi-device')" -ge 2 ] && break
+		sleep 2
+	done
+	[ "$(uci -q get wireless.cr8816_auto)" = done ] && { lock -u /var/lock/cr8816-wifi-on; exit 0; }
+	changed=0
+	for dev in $(uci -q show wireless | sed -n 's/^wireless\.\([^.=]*\)=wifi-device$/\1/p'); do
+		iface=$(uci -q show wireless | sed -n "s/^wireless\.\([^.=]*\)\.device='$dev'\$/\1/p" | head -1)
+		[ -n "$iface" ] || continue
+		[ "$(uci -q get wireless.$iface.ssid)" = OpenWrt ] || continue
+		[ "$(uci -q get wireless.$iface.encryption)" = none ] || continue
+		band=$(uci -q get wireless.$dev.band)
+		ssid=CR8816; [ "$band" = 5g ] && ssid=CR8816-5G
+		[ "$band" = 5g ] && uci set wireless.$dev.channel=36
+		uci set wireless.$dev.disabled=0
+		uci set wireless.$dev.country=VN
+		uci set wireless.$iface.ssid=$ssid
+		uci set wireless.$iface.encryption=psk2
+		uci set wireless.$iface.key=12345678
+		uci -q delete wireless.$iface.disabled
+		changed=1
+	done
+	uci set wireless.cr8816_auto=done
+	uci commit wireless
+	[ $changed = 1 ] && { logger -t cr8816 "Wi-Fi bat mac dinh: CR8816 / CR8816-5G"; wifi reload; }
+	lock -u /var/lock/cr8816-wifi-on
+) </dev/null >/dev/null 2>&1 &
+exit 0
+HP
+
 echo "[port-cr8816] xong:"
 echo "  $T/dts/ipq5018-cr8816.dts"
 grep -n 'xiaomi_cr8816' "$MK" | head -2

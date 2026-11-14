@@ -44,7 +44,7 @@ SRC_BRANCH="${SRC_BRANCH:-main}"
 STOCK_CONFIG="${STOCK_CONFIG:-mp03.3}"   # machid 0x8040002 -> U-Boot Xiaomi chon config@mp03.3
 ECC_STRENGTH="${ECC_STRENGTH:-}"
 CPUFREQ_MODE="${CPUFREQ_MODE:-stock}"
-LUCI_LANG="${LUCI_LANG:-vi}"
+LUCI_LANG="${LUCI_LANG-vi}"
 JOBS="${JOBS:-$(nproc)}"
 STEP="${STEP:-all}"
 # BOARD=cr8816: may CR8816 dung switch Motorcomm YT9215S (xem port-cr8816.sh)
@@ -292,7 +292,7 @@ CONFIG_TARGET_INITRAMFS_COMPRESSION_ZSTD=y
 CONFIG_CCACHE=y
 # CONFIG_KERNEL_DEBUG_INFO is not set
 EOF
-    [ -n "$LUCI_LANG" ] && echo "CONFIG_LUCI_LANG_${LUCI_LANG}=y"
+    [ -n "$LUCI_LANG" ] && [ "$LUCI_LANG" != en ] && echo "CONFIG_LUCI_LANG_${LUCI_LANG}=y"
   } >.config
   # Xoa cache quet package (tmp/) de khong dung thong tin cu luc feeds chua du
   rm -rf tmp
