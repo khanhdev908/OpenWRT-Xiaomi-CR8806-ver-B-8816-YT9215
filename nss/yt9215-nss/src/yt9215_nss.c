@@ -488,6 +488,8 @@ MODULE_PARM_DESC(poll_ms, "PHY link poll interval (0 = off)");
 static struct delayed_work poll_work;
 static u32 last_ctrl[8];
 
+static u16 last_regs[8][5];
+
 static u32 yt_phy_resolve(unsigned int phy, const char **desc)
 {
 	u16 adv = 0, lpa = 0, c1000 = 0, s1000 = 0;
@@ -503,8 +505,16 @@ static u32 yt_phy_resolve(unsigned int phy, const char **desc)
 		u16 ssr = 0;
 
 		yt_phy_read(phy, 0x11, &ssr);
-		pr_info("yt9215-nss: PHY %u ADV %04x LPA %04x CTRL1000 %04x STAT1000 %04x SSR %04x\n",
-			phy, adv, lpa, c1000, s1000, ssr);
+		if (last_regs[phy][0] != adv || last_regs[phy][1] != lpa ||
+		    last_regs[phy][2] != c1000 || last_regs[phy][3] != s1000 ||
+		    last_regs[phy][4] != ssr)
+			pr_info("yt9215-nss: PHY %u ADV %04x LPA %04x CTRL1000 %04x STAT1000 %04x SSR %04x\n",
+				phy, adv, lpa, c1000, s1000, ssr);
+		last_regs[phy][0] = adv;
+		last_regs[phy][1] = lpa;
+		last_regs[phy][2] = c1000;
+		last_regs[phy][3] = s1000;
+		last_regs[phy][4] = ssr;
 	}
 
 	if ((c1000 & ADVERTISE_1000FULL) && (s1000 & LPA_1000FULL)) {

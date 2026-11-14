@@ -284,6 +284,9 @@ CONFIG_PACKAGE_luci-compat=y
 CONFIG_PACKAGE_luci-app-nss=y
 CONFIG_PACKAGE_luci-app-sqm=y
 CONFIG_PACKAGE_luci-proto-ppp=y
+# --- debug mang ---
+CONFIG_PACKAGE_tcpdump-mini=y
+CONFIG_PACKAGE_ethtool=y
 # --- Image ---
 CONFIG_TARGET_ROOTFS_SQUASHFS=y
 # initramfs: *-initramfs-uImage.itb de boot tam vao RAM (tftpboot + bootm)
