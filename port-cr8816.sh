@@ -319,6 +319,71 @@ fi
 exit 0
 HP
 
+# --- 8. NSS thu nghiem: switch YT9215 lam fabric 802.1Q (topology vlan-trunk) -
+# yt921x (DSA) bi unbind luc boot, yt9215-nss reset switch, tat CPU tag, chia
+# VLAN 1 = lan1-3 (port 0-2), VLAN 2 = wan (port 3), trunk port 8 tagged ->
+# eth1.1 / eth1.2. Tat bang CR8816_NSS=0.
+if [ "${CR8816_NSS:-1}" = 1 ]; then
+  rm -rf package/kernel/yt9215-nss
+  cp -r "$HERE/nss/yt9215-nss" package/kernel/yt9215-nss
+  grep -q 'kmod-yt9215-nss' "$MK" ||
+    sed -i '/define Device\/xiaomi_cr8816/,/^endef/ s/^\t\t-ipq-wifi-xiaomi_cr8806 \\$/\t\t-ipq-wifi-xiaomi_cr8806 kmod-yt9215-nss \\/' "$MK"
+  grep -q 'kmod-yt9215-nss' "$MK" || { echo "[port-cr8816] khong them duoc kmod-yt9215-nss" >&2; exit 1; }
+
+  INIT=package/nss/nss-tools/files/nss-dwmac.init
+  DEF=package/nss/nss-tools/files/nss-dwmac.defaults
+  if ! grep -q 'yt9215)' "$INIT"; then
+    gawk '
+      !a && /^\trtl8367s\)$/ && infn {
+        print "\tyt9215)"
+        print "\t\tdriver=yt921x"
+        print "\t\t[ -n \"$dev\" ] || dev=\"90000.mdio-1:1d\""
+        print "\t\t;;"
+        a=1
+      }
+      /^switch_to_trunk\(\)/ { infn=1 }
+      !b && /^\tvtu="\$\(uci -q get nss.general.vtu\)"$/ {
+        print "\tif [ \"$fabric\" = \"yt9215\" ]; then"
+        print "\t\tif ! insmod \"/lib/modules/$(uname -r)/yt9215-nss.ko\" identify=1; then"
+        print "\t\t\tlogger -p user.err -t nss \"yt9215-nss: no YT9215 answers - yt921x stays bound\""
+        print "\t\t\treturn 1"
+        print "\t\tfi"
+        print "\t\trmmod yt9215_nss"
+        print "\tfi"
+        print ""
+        b=1
+      }
+      { print }
+      END { if (!a || !b) exit 1 }' "$INIT" >"$INIT.tmp" && mv "$INIT.tmp" "$INIT" ||
+      { echo "[port-cr8816] patch nss-dwmac.init that bai" >&2; exit 1; }
+  fi
+  if ! grep -q 'xiaomi,cr8816)' "$DEF"; then
+    gawk '
+      !a && /^nss_dwmac_board_defaults\(\)/ { infn=1 }
+      !a && infn && /^\t\*\)$/ {
+        print "\txiaomi,cr8816)"
+        print "\t\t# YT9215S: port 8 = CPU (2500base-x, GMAC1 = eth1), 0-2 = lan1-3,"
+        print "\t\t# 3 = wan. yt921x is unbound, yt9215-nss re-arms the fabric."
+        print "\t\t# GMAC0 (eth0) is unused. Wi-Fi stays on the host (QCN6122 BDF"
+        print "\t\t# borrowed from the CR8806; offload untested)."
+        print "\t\tfw_mask='"'"'0x2'"'"'"
+        print "\t\ttrunk='"'"'eth1'"'"'"
+        print "\t\ttrunk_if='"'"'1'"'"'"
+        print "\t\tfabric='"'"'yt9215'"'"'"
+        print "\t\tswitch_dev='"'"'90000.mdio-1:1d'"'"'"
+        print "\t\tswitch_args='"'"''"'"'"
+        print "\t\twifi_offload='"'"'0'"'"'"
+        print "\t\tvtu='"'"'1:8t,0u,1u,2u;2:8t,3u'"'"'"
+        print "\t\t;;"
+        a=1
+      }
+      { print }
+      END { if (!a) exit 1 }' "$DEF" >"$DEF.tmp" && mv "$DEF.tmp" "$DEF" ||
+      { echo "[port-cr8816] patch nss-dwmac.defaults that bai" >&2; exit 1; }
+  fi
+  sed -i 's/^dev=wan$/dev=$(uci -q get network.wan.device); dev=${dev:-wan}\ncase "$dev" in *.*) exit 0 ;; esac  # NSS trunk: eth1.2 bao toc do trunk, khong phai cong WAN/' files/etc/hotplug.d/iface/30-cr8816-wanshape
+fi
+
 echo "[port-cr8816] xong:"
 echo "  $T/dts/ipq5018-cr8816.dts"
 grep -n 'xiaomi_cr8816' "$MK" | head -2
