@@ -390,7 +390,7 @@ static void yt_trunk_up(void)
 	yt_write(YT_MDIO_POLLINGn(p), sspeed | POLL_DUPLEX | POLL_LINK);
 }
 
-static bool phy_reset = true;
+static bool phy_reset;
 module_param(phy_reset, bool, 0444);
 MODULE_PARM_DESC(phy_reset, "soft-reset each internal PHY and restart autoneg");
 
