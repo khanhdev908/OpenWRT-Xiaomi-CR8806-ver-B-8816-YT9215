@@ -96,6 +96,17 @@
 #define YT_ACT_UNK_UCAST	0x180734
 #define YT_ACT_UNK_MCAST	0x180738
 #define YT_VLANn_CTRL(v)	(0x188000 + 8 * (v))
+/* Egress C-tag mode, bits 14:12 (from the Motorcomm SDK field table in the
+ * stock yt_switch.ko: egr_port_vlan_ctrln, field 4; fal_tiger_vlan_port_
+ * egrTagMode_set writes the mode there): 0 untagged, 1 tagged, 3 follow
+ * the VLAN table. The reset default leaves every port untagged, so the
+ * trunk sent its frames up without a tag (measured: NSS rx_fw counting,
+ * eth1.1 RX 0). The VLAN table's untag mask alone does not decide it.
+ */
+#define YT_PORTn_EGR_VLAN(p)	(0x100080 + 4 * (p))
+#define  EGR_CTAG_MODE_M	GENMASK(14, 12)
+#define  EGR_CTAG_UNTAGGED	0
+#define  EGR_CTAG_TAGGED	1
 #define YT_PORTn_IGR_TPID(p)	(0x210010 + 4 * (p))
 #define YT_PORTn_VLAN_CTRL(p)	(0x230010 + 4 * (p))
 #define  PVID_M			GENMASK(17, 6)
@@ -147,6 +158,7 @@ static struct mii_bus *bus;
 static int yt_error;
 static u16 used_ports;	/* every port named in vlans */
 static u16 first_vid = 1;
+static u16 tagged_ports;	/* ports listed 't' in any VLAN */
 static u16 phy_mask;	/* internal PHYs = front ports, from phys */
 
 static void yt_fail(int ret)
@@ -312,6 +324,8 @@ static int yt_parse_vlans(bool apply)
 				return -EINVAL;
 			}
 			members |= BIT(port);
+			if (*end == 't')
+				tagged_ports |= BIT(port);
 			if (*end == 'u') {
 				untag |= BIT(port);
 				if (!pvid[port])
@@ -352,6 +366,17 @@ static int yt_parse_vlans(bool apply)
 		yt_write(YT_PORTn_IGR_TPID(p), BIT(0));	/* C-tag TPID 0 = 0x8100 */
 	}
 	yt_update(YT_VLAN_IGR_FILTER, 0x7ff, used_ports);
+
+	for (p = 0; p < YT_NPORTS; p++) {
+		u32 mode;
+
+		if (!(used_ports & BIT(p)))
+			continue;
+		mode = tagged_ports & BIT(p) ? EGR_CTAG_TAGGED : EGR_CTAG_UNTAGGED;
+		yt_update(YT_PORTn_EGR_VLAN(p), EGR_CTAG_MODE_M,
+			  FIELD_PREP(EGR_CTAG_MODE_M, mode));
+		pr_info("yt9215-nss: port %d egress %s\n", p, mode ? "tagged" : "untagged");
+	}
 	return 0;
 }
 
@@ -474,6 +499,13 @@ static u32 yt_phy_resolve(unsigned int phy, const char **desc)
 	yt_phy_read(phy, MII_CTRL1000, &c1000);
 	yt_phy_read(phy, MII_STAT1000, &s1000);
 	common = adv & lpa;
+	{
+		u16 ssr = 0;
+
+		yt_phy_read(phy, 0x11, &ssr);
+		pr_info("yt9215-nss: PHY %u ADV %04x LPA %04x CTRL1000 %04x STAT1000 %04x SSR %04x\n",
+			phy, adv, lpa, c1000, s1000, ssr);
+	}
 
 	if ((c1000 & ADVERTISE_1000FULL) && (s1000 & LPA_1000FULL)) {
 		ctrl |= 2 | PORT_DUPLEX;
@@ -521,9 +553,14 @@ static void yt_poll(struct work_struct *w)
 			continue;
 		yt_write(YT_PORTn_CTRL(phy), ctrl);
 		last_ctrl[phy] = ctrl;
-		if (desc)
-			pr_info("yt9215-nss: port %u link up %s%s\n", phy, desc,
-				ctrl & PORT_TX_PAUSE ? " +pause" : "");
+		if (desc) {
+			u32 st = 0;
+
+			msleep(20);
+			yt_read(YT_PORTn_STATUS(phy), &st);
+			pr_info("yt9215-nss: port %u link up %s%s (ctrl 0x%04x status 0x%04x)\n",
+				phy, desc, ctrl & PORT_TX_PAUSE ? " +pause" : "", ctrl, st);
+		}
 		else
 			pr_info("yt9215-nss: port %u link down\n", phy);
 	}
