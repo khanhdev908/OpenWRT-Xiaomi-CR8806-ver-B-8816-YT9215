@@ -275,6 +275,26 @@ for c in IPQ5018 QCN6122; do
   fi
 done
 
+# --- 6. Danh dau boot thanh cong cho U-Boot Xiaomi --------------------------
+# bootmiwifi tang flag_try_sys1_failed moi lan boot; neu khong reset, U-Boot
+# co the chuyen sang rootfs_1. Reset ve 0 khi he thong da len.
+mkdir -p files/etc/init.d files/etc/rc.d
+cat > files/etc/init.d/mi_bootok <<'INIT'
+#!/bin/sh /etc/rc.common
+START=99
+boot() {
+	case "$(board_name)" in
+	xiaomi,cr8816|xiaomi,cr8806) ;;
+	*) return 0 ;;
+	esac
+	command -v fw_printenv >/dev/null || return 0
+	[ "$(fw_printenv -n flag_try_sys1_failed 2>/dev/null)" = 0 ] || fw_setenv flag_try_sys1_failed 0
+	[ "$(fw_printenv -n flag_boot_success 2>/dev/null)" = 1 ] || fw_setenv flag_boot_success 1
+}
+INIT
+chmod 755 files/etc/init.d/mi_bootok
+ln -sf ../init.d/mi_bootok files/etc/rc.d/S99mi_bootok
+
 echo "[port-cr8816] xong:"
 echo "  $T/dts/ipq5018-cr8816.dts"
 grep -n 'xiaomi_cr8816' "$MK" | head -2
