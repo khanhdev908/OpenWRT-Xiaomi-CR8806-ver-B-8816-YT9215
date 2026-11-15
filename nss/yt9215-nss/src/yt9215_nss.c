@@ -32,6 +32,7 @@
 #include <linux/phy.h>
 #include <linux/mii.h>
 #include <linux/string.h>
+#include <linux/if_ether.h>
 #include <linux/workqueue.h>
 #include <linux/bits.h>
 #include <linux/bitfield.h>
@@ -107,6 +108,17 @@
 #define  EGR_CTAG_MODE_M	GENMASK(14, 12)
 #define  EGR_CTAG_UNTAGGED	0
 #define  EGR_CTAG_TAGGED	1
+/* TPID profiles. Egress: port picks profile idx in bits 5:4 of 0x100000+4p,
+ * the profile table at 0x100300 holds the TPID. After a hardware reset the
+ * table is empty, so the trunk tagged its frames with TPID 0x0000
+ * (measured: tcpdump on eth1 showed "802.3, length 0" for every frame from
+ * the switch). The SDK programs profile 0 = 0x8100 at init; do the same for
+ * the ingress table at 0x210000.
+ */
+#define YT_PORTn_EGR(p)		(0x100000 + 4 * (p))
+#define  EGR_TPID_CTAG_M	GENMASK(5, 4)
+#define YT_TPID_EGR(n)		(0x100300 + 4 * (n))
+#define YT_TPID_IGR(n)		(0x210000 + 4 * (n))
 #define YT_PORTn_IGR_TPID(p)	(0x210010 + 4 * (p))
 #define YT_PORTn_VLAN_CTRL(p)	(0x230010 + 4 * (p))
 #define  PVID_M			GENMASK(17, 6)
@@ -365,6 +377,15 @@ static int yt_parse_vlans(bool apply)
 		yt_update(YT_PORTn_VLAN_CTRL1(p), 0x3, 0);
 		yt_write(YT_PORTn_IGR_TPID(p), BIT(0));	/* C-tag TPID 0 = 0x8100 */
 	}
+	yt_update(YT_TPID_EGR(0), 0xffff, ETH_P_8021Q);
+	yt_update(YT_TPID_IGR(0), 0xffff, ETH_P_8021Q);
+	{
+		u32 te = 0, ti = 0;
+
+		yt_read(YT_TPID_EGR(0), &te);
+		yt_read(YT_TPID_IGR(0), &ti);
+		pr_info("yt9215-nss: TPID profile 0: egress 0x%04x ingress 0x%04x\n", te, ti);
+	}
 	yt_update(YT_VLAN_IGR_FILTER, 0x7ff, used_ports);
 
 	for (p = 0; p < YT_NPORTS; p++) {
@@ -373,6 +394,7 @@ static int yt_parse_vlans(bool apply)
 		if (!(used_ports & BIT(p)))
 			continue;
 		mode = tagged_ports & BIT(p) ? EGR_CTAG_TAGGED : EGR_CTAG_UNTAGGED;
+		yt_update(YT_PORTn_EGR(p), EGR_TPID_CTAG_M, 0);
 		yt_update(YT_PORTn_EGR_VLAN(p), EGR_CTAG_MODE_M,
 			  FIELD_PREP(EGR_CTAG_MODE_M, mode));
 		pr_info("yt9215-nss: port %d egress %s\n", p, mode ? "tagged" : "untagged");
