@@ -542,6 +542,51 @@ static u32 last_ctrl[8];
 
 static u16 last_regs[8][5];
 
+/* Port state for userspace (LuCI Port status): the poller fills it, the
+ * "ports" parameter prints it. No bus access from the reader.
+ */
+#define YT_MIBn_DATA0(p)	(0xc0100 + 0x100 * (p))
+#define  MIB_RX_GOOD_BYTES	0x3c
+#define  MIB_TX_GOOD_BYTES	0x84
+static struct {
+	u32 ctrl;
+	u64 rx_bytes, tx_bytes;
+} pstate[8];
+
+static u64 yt_mib64(int port, u32 off)
+{
+	u32 lo = 0, hi = 0;
+
+	yt_read(YT_MIBn_DATA0(port) + off, &lo);
+	yt_read(YT_MIBn_DATA0(port) + off + 4, &hi);
+	return ((u64)hi << 32) | lo;
+}
+
+static int yt_ports_get(char *buf, const struct kernel_param *kp)
+{
+	static const unsigned int spd[] = { 10, 100, 1000, 0 };
+	int p, n = 0;
+
+	for (p = 0; p < 8; p++) {
+		u32 c = READ_ONCE(pstate[p].ctrl);
+
+		if (!(phy_mask & BIT(p)))
+			continue;
+		n += scnprintf(buf + n, PAGE_SIZE - n, "%d %s %u %s %llu %llu\n", p,
+			       c ? "up" : "down", c ? spd[c & 3] : 0,
+			       c & PORT_DUPLEX ? "full" : "half",
+			       READ_ONCE(pstate[p].rx_bytes),
+			       READ_ONCE(pstate[p].tx_bytes));
+	}
+	return n;
+}
+
+static const struct kernel_param_ops yt_ports_ops = {
+	.get = yt_ports_get,
+};
+module_param_cb(ports, &yt_ports_ops, NULL, 0444);
+MODULE_PARM_DESC(ports, "front port state: port up|down speed duplex rx_bytes tx_bytes");
+
 static u32 yt_phy_resolve(unsigned int phy, const char **desc)
 {
 	u16 adv = 0, lpa = 0, c1000 = 0, s1000 = 0;
@@ -611,6 +656,9 @@ static void yt_poll(struct work_struct *w)
 			ctrl = 0;
 			desc = NULL;
 		}
+		WRITE_ONCE(pstate[phy].rx_bytes, yt_mib64(phy, MIB_RX_GOOD_BYTES));
+		WRITE_ONCE(pstate[phy].tx_bytes, yt_mib64(phy, MIB_TX_GOOD_BYTES));
+		WRITE_ONCE(pstate[phy].ctrl, ctrl);
 		if (ctrl == last_ctrl[phy])
 			continue;
 		yt_write(YT_PORTn_CTRL(phy), ctrl);

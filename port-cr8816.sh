@@ -364,15 +364,15 @@ if [ "${CR8816_NSS:-1}" = 1 ]; then
         print "\txiaomi,cr8816)"
         print "\t\t# YT9215S: port 8 = CPU (2500base-x, GMAC1 = eth1), 0-2 = lan1-3,"
         print "\t\t# 3 = wan. yt921x is unbound, yt9215-nss re-arms the fabric."
-        print "\t\t# GMAC0 (eth0) is unused. Wi-Fi stays on the host (QCN6122 BDF"
-        print "\t\t# borrowed from the CR8806; offload untested)."
+        print "\t\t# GMAC0 (eth0) is unused. Wi-Fi offload (wifili) on: tested on"
+        print "\t\t# both radios 2026-11-15 (QCN6122 BDF borrowed from the CR8806)."
         print "\t\tfw_mask='"'"'0x2'"'"'"
         print "\t\ttrunk='"'"'eth1'"'"'"
         print "\t\ttrunk_if='"'"'1'"'"'"
         print "\t\tfabric='"'"'yt9215'"'"'"
         print "\t\tswitch_dev='"'"'90000.mdio-1:1d'"'"'"
         print "\t\tswitch_args='"'"''"'"'"
-        print "\t\twifi_offload='"'"'0'"'"'"
+        print "\t\twifi_offload='"'"'1'"'"'"
         print "\t\tvtu='"'"'1:8t,0u,1u,2u;2:8t,3u'"'"'"
         print "\t\t;;"
         a=1
@@ -381,6 +381,13 @@ if [ "${CR8816_NSS:-1}" = 1 ]; then
       END { if (!a) exit 1 }' "$DEF" >"$DEF.tmp" && mv "$DEF.tmp" "$DEF" ||
       { echo "[port-cr8816] patch nss-dwmac.defaults that bai" >&2; exit 1; }
   fi
+  # LuCI Port status: lan1..wan netdevs are gone with DSA unbound; read the
+  # front ports from yt9215-nss instead (stock panel kept as the fallback).
+  mkdir -p files/usr/share/cr8816 files/usr/share/rpcd/acl.d files/etc/uci-defaults
+  cp "$HERE/nss/yt9215-nss/luci/29_ports.js" files/usr/share/cr8816/29_ports.js
+  cp "$HERE/nss/yt9215-nss/luci/acl-cr8816-switch.json" files/usr/share/rpcd/acl.d/luci-cr8816-switch.json
+  cp "$HERE/nss/yt9215-nss/luci/95-cr8816-ports" files/etc/uci-defaults/95-cr8816-ports
+  chmod 755 files/etc/uci-defaults/95-cr8816-ports
   sed -i 's/^dev=wan$/dev=$(uci -q get network.wan.device); dev=${dev:-wan}\ncase "$dev" in *.*) exit 0 ;; esac  # NSS trunk: eth1.2 bao toc do trunk, khong phai cong WAN/' files/etc/hotplug.d/iface/30-cr8816-wanshape
 fi
 

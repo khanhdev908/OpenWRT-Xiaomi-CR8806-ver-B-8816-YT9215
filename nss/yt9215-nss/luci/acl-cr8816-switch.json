@@ -1,0 +1,11 @@
+{
+	"luci-cr8816-switch-ports": {
+		"description": "Read the CR8816 YT9215 front port state (Port status)",
+		"read": {
+			"file": {
+				"/sys/module/yt9215_nss/parameters/ports": [ "read" ],
+				"/bin/cat /sys/module/yt9215_nss/parameters/ports": [ "exec" ]
+			}
+		}
+	}
+}

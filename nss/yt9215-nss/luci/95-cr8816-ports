@@ -1,0 +1,10 @@
+#!/bin/sh
+# Swap in the YT9215 Port status panel, keeping the stock one as a fallback.
+D=/www/luci-static/resources/view/status
+N=/usr/share/cr8816/29_ports.js
+[ -f "$N" ] || exit 0
+cmp -s "$N" "$D/include/29_ports.js" && exit 0
+[ -f "$D/ports_dsa.js" ] || cp "$D/include/29_ports.js" "$D/ports_dsa.js"
+cp "$N" "$D/include/29_ports.js"
+rm -rf /tmp/luci-indexcache* /tmp/luci-modulecache 2>/dev/null
+exit 0
