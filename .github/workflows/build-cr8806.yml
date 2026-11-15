@@ -45,7 +45,6 @@ jobs:
       CPUFREQ_MODE: ${{ inputs.cpufreq_mode }}
       LUCI_LANG: ${{ inputs.luci_lang }}
       SRC_BRANCH: ${{ inputs.src_branch }}
-      CCACHE_DIR: ${{ github.workspace }}/.ccache
     steps:
       - uses: actions/checkout@v4
 
@@ -56,14 +55,34 @@ jobs:
           sudo docker image prune --all --force >/dev/null 2>&1 || true
           df -h / | tail -1
 
-      - name: Cache nguon tai ve (dl/) va ccache
+      # Commit nguon fanha99 dang build: khoa cho cache toolchain (doi commit = build lai toolchain)
+      - name: Lay commit nguon
+        id: src
+        run: |
+          rev=$(git ls-remote https://github.com/fanha99/openwrt-xiaomi-cr8806-nss.git "refs/heads/${{ inputs.src_branch }}" | cut -c1-12)
+          echo "rev=${rev:-unknown}" >>"$GITHUB_OUTPUT"
+          echo "Nguon: ${{ inputs.src_branch }} @ ${rev:-unknown}"
+
+      # dl/ (ma nguon tai ve) va ccache: luon khoi phuc ban moi nhat.
+      # OpenWrt dat CCACHE_DIR = $(TOPDIR)/.ccache, nen cache dung thu muc do.
+      - name: Cache dl/ va ccache
         uses: actions/cache@v4
         with:
           path: |
             cr8806-build/openwrt/dl
-            .ccache
-          key: cr8806-${{ inputs.src_branch }}-${{ github.run_id }}
-          restore-keys: cr8806-${{ inputs.src_branch }}-
+            cr8806-build/openwrt/.ccache
+          key: cr8806-dl-${{ inputs.src_branch }}-${{ github.run_id }}
+          restore-keys: cr8806-dl-${{ inputs.src_branch }}-
+
+      # Host tools + toolchain da build: chi dung lai khi cung commit nguon.
+      - name: Cache tools + toolchain
+        id: tc
+        uses: actions/cache@v4
+        with:
+          path: |
+            cr8806-build/openwrt/staging_dir/host
+            cr8806-build/openwrt/staging_dir/toolchain-*
+          key: cr8806-tc-${{ inputs.board }}-${{ steps.src.outputs.rev }}
 
       - name: Patch + .config
         run: |
@@ -77,6 +96,16 @@ jobs:
           STEP=patch  ./build-cr8806.sh "$STOCK"
           STEP=config ./build-cr8806.sh
 
+      # Cache trung: bo phu thuoc tools/toolchain trong Makefile goc de make khong
+      # build lai chung (ma nguon clone moi nen moi file deu "moi" hon stamp).
+      - name: Dung lai tools + toolchain tu cache
+        if: steps.tc.outputs.cache-hit == 'true'
+        run: |
+          cd cr8806-build/openwrt
+          sed -i 's/ $(tool.*\/stamp-compile)//;' Makefile
+          find staging_dir/host staging_dir/toolchain-* -exec touch -h {} + 2>/dev/null || true
+          grep -n 'stamp-compile' Makefile | head -5
+
       - name: Build (make download + make -j)
         run: STEP=build SKIP_DEPS=1 ./build-cr8806.sh
 
@@ -86,6 +115,12 @@ jobs:
           md5sum wifi-cr8816/board-2.bin.* || true
           md5sum cr8806-build/openwrt/files/lib/firmware/ath11k/*/hw1.0/board-2.bin || true
           md5sum cr8806-build/openwrt/build_dir/target-*/root-qualcommax/lib/firmware/ath11k/*/hw1.0/board-2.bin || true
+
+      - name: Thong ke ccache
+        if: always()
+        run: |
+          cd cr8806-build/openwrt 2>/dev/null && CCACHE_DIR=$PWD/.ccache ccache -s 2>/dev/null | head -20 || true
+          du -sh .ccache staging_dir/host staging_dir/toolchain-* 2>/dev/null || true
 
       - name: Upload firmware
         if: always()
