@@ -89,6 +89,7 @@
 #define YT_INT_MBUS_DIN		0xf000c
 
 #define YT_VLAN_IGR_FILTER	0x180280
+#define YT_VLAN_EGR_FILTER	0x180598
 #define YT_PORTn_ISOLATION(p)	(0x180294 + 4 * (p))
 #define YT_STP0			0x18038c
 #define YT_PORTn_LEARN(p)	(0x1803d0 + 4 * (p))
@@ -313,6 +314,7 @@ static int yt_parse_vlans(bool apply)
 {
 	char buf[256], *s, *blk, *tok, *end;
 	u16 pvid[YT_NPORTS] = { 0 };
+	u16 reach[YT_NPORTS] = { 0 };	/* ports sharing a VLAN with p */
 	int p;
 
 	strscpy(buf, vlans, sizeof(buf));
@@ -347,6 +349,9 @@ static int yt_parse_vlans(bool apply)
 		if (!used_ports)
 			first_vid = vid;
 		used_ports |= members;
+		for (p = 0; p < YT_NPORTS; p++)
+			if (members & BIT(p))
+				reach[p] |= members;
 		if (!apply)
 			continue;
 		/* word a: members in 17:7, FID low bits in 31:23; word b:
@@ -357,8 +362,14 @@ static int yt_parse_vlans(bool apply)
 		b = (untag << 8) | (vid >> 9);
 		yt_write(YT_VLANn_CTRL(vid), a);
 		yt_write(YT_VLANn_CTRL(vid) + 4, b);
-		pr_info("yt9215-nss: VLAN %u members 0x%03x untagged 0x%03x\n",
-			vid, members, untag);
+		{
+			u32 ra = 0, rb = 0;
+
+			yt_read(YT_VLANn_CTRL(vid), &ra);
+			yt_read(YT_VLANn_CTRL(vid) + 4, &rb);
+			pr_info("yt9215-nss: VLAN %u members 0x%03x untagged 0x%03x (readback a=0x%08x b=0x%08x)\n",
+				vid, members, untag, ra, rb);
+		}
 	}
 
 	if (!apply)
@@ -387,6 +398,25 @@ static int yt_parse_vlans(bool apply)
 		pr_info("yt9215-nss: TPID profile 0: egress 0x%04x ingress 0x%04x\n", te, ti);
 	}
 	yt_update(YT_VLAN_IGR_FILTER, 0x7ff, used_ports);
+	yt_update(YT_VLAN_EGR_FILTER, 0x7ff, used_ports);
+
+	/* The VLAN member mask alone did not keep the groups apart (measured:
+	 * a PC on a LAN port got its DHCP lease from the modem on the WAN
+	 * port). Port isolation is a hard per-ingress-port block mask, as
+	 * yt921x uses it for standalone ports: each port may only reach
+	 * ports it shares a VLAN with.
+	 */
+	for (p = 0; p < YT_NPORTS; p++) {
+		u32 blk, rd = 0;
+
+		if (!(used_ports & BIT(p)))
+			continue;
+		blk = 0x7ff & ~(reach[p] | BIT(p));
+		yt_write(YT_PORTn_ISOLATION(p), blk);
+		yt_read(YT_PORTn_ISOLATION(p), &rd);
+		pr_info("yt9215-nss: port %d reaches 0x%03x, isolation 0x%03x (readback 0x%03x)\n",
+			p, reach[p], blk, rd);
+	}
 
 	for (p = 0; p < YT_NPORTS; p++) {
 		u32 mode;
